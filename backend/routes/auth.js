@@ -11,7 +11,7 @@ router.post('/signup', async (req, res) => {
   const { data, error } = await supabaseAuth.auth.signUp({ email, password });
   if (error) return res.status(400).json({ error: error.message });
 
-  await prisma.profile.create({
+  await prisma.user.create({
     data: {
       id: data.user.id,
       email,
@@ -46,7 +46,7 @@ router.post('/otp/verify', async (req, res) => {
   });
   if (error) return res.status(400).json({ error: error.message });
 
-  await prisma.profile.upsert({
+  await prisma.user.upsert({
     where: { id: data.user.id },
     update: {},
     create: { id: data.user.id, email, fullName: '', role: 'PASSENGER' },

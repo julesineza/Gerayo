@@ -46,18 +46,18 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (phoneNumber, pin) => {
+  const login = async (email, password) => {
     try {
-      const response = await apiService.login({ phoneNumber, pin });
+      const response = await apiService.login({ email, password });
       
-      if (response.token && response.user) {
-        await AsyncStorage.setItem('auth_token', response.token);
+      if (response.session?.access_token && response.user) {
+        await AsyncStorage.setItem('auth_token', response.session.access_token);
         await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
         
-        setToken(response.token);
+        setToken(response.session.access_token);
         setUser(response.user);
         setIsAuthenticated(true);
-        socketService.connect(response.token);
+        socketService.connect(response.session.access_token);
         
         return { success: true, user: response.user };
       }
@@ -72,23 +72,23 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const register = async (phoneNumber, fullName, pin, role) => {
+  const register = async (email, fullName, password, role) => {
     try {
       const response = await apiService.register({
-        phoneNumber,
+        email,
         fullName,
-        pin,
+        password,
         role,
       });
       
-      if (response.token && response.user) {
-        await AsyncStorage.setItem('auth_token', response.token);
+      if (response.session?.access_token && response.user) {
+        await AsyncStorage.setItem('auth_token', response.session.access_token);
         await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
         
-        setToken(response.token);
+        setToken(response.session.access_token);
         setUser(response.user);
         setIsAuthenticated(true);
-        socketService.connect(response.token);
+        socketService.connect(response.session.access_token);
         
         return { success: true, user: response.user };
       }

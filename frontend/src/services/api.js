@@ -49,20 +49,20 @@ class ApiService {
 
   // Auth endpoints
   async register(userData) {
-    return this.request('/api/auth/register', {
+    return this.request('/auth/signup', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
   }
 
   async login(credentials) {
-    const response = await this.request('/api/auth/login', {
+    const response = await this.request('/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
     
-    if (response.token) {
-      this.setToken(response.token);
+    if (response.session?.access_token) {
+      this.setToken(response.session.access_token);
     }
     
     return response;

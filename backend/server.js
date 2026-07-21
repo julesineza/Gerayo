@@ -20,8 +20,8 @@ const io = new Server(server, {
 });
 
 app.use(cors({
-  origins:'*',}
-));
+  origin: '*',
+}));
 app.use(express.json()); // Parses incoming JSON requests
 
 app.use('/auth', authRoutes); // Mount auth routes
@@ -34,7 +34,7 @@ app.get('/', (req, res) => {
 // WebSocket connection for real-time tracking
 io.on('connection', (socket) => {
   console.log('A user/driver connected:', socket.id);
-  
+
   // Listen for driver location updates
   socket.on('updateLocation', (data) => {
     // Broadcast location to matching passenger
@@ -46,7 +46,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

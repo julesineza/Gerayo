@@ -35,10 +35,10 @@ export default function OnboardingScreen({ onAuthComplete }) {
   const [selectedRole, setSelectedRole] = useState('passenger'); // 'passenger' or 'driver'
   const [isLoading, setIsLoading] = useState(false);
 
-  // Input states - changed to phone + PIN
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [pin, setPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
+  // Input states - email and password
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
 
   const handleNextSlide = () => {
@@ -55,25 +55,25 @@ export default function OnboardingScreen({ onAuthComplete }) {
 
   const handleAuthSubmit = async () => {
     // Validation
-    if (!phoneNumber || !pin) {
+    if (!email || !password) {
       Alert.alert('Error', 'Please fill in all required fields.');
       return;
     }
 
-    // Phone number validation (basic)
-    if (!/^\+?[0-9]{10,15}$/.test(phoneNumber)) {
-      Alert.alert('Error', 'Please enter a valid phone number.');
+    // Email validation
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address.');
       return;
     }
 
-    // PIN validation
-    if (pin.length < 4) {
-      Alert.alert('Error', 'PIN must be at least 4 digits.');
+    // Password validation
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters.');
       return;
     }
 
-    if (!isLoginState && pin !== confirmPin) {
-      Alert.alert('Error', 'PINs do not match.');
+    if (!isLoginState && password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match.');
       return;
     }
 
@@ -87,9 +87,9 @@ export default function OnboardingScreen({ onAuthComplete }) {
     try {
       let result;
       if (isLoginState) {
-        result = await login(phoneNumber, pin);
+        result = await login(email, password);
       } else {
-        result = await register(phoneNumber, fullName, pin, selectedRole.toUpperCase());
+        result = await register(email, fullName, password, selectedRole.toUpperCase());
       }
 
       if (result.success) {
@@ -237,29 +237,27 @@ export default function OnboardingScreen({ onAuthComplete }) {
           )}
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="call-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
+            <Ionicons name="mail-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
             <TextInput
-              placeholder="Phone Number"
+              placeholder="Email Address"
               placeholderTextColor={COLORS.textSecondary}
               style={styles.textInput}
-              keyboardType="phone-pad"
+              keyboardType="email-address"
               autoCapitalize="none"
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
+              value={email}
+              onChangeText={setEmail}
             />
           </View>
 
           <View style={styles.inputWrapper}>
             <Ionicons name="lock-closed-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
             <TextInput
-              placeholder="PIN (4+ digits)"
+              placeholder="Password"
               placeholderTextColor={COLORS.textSecondary}
               secureTextEntry={true}
               style={styles.textInput}
-              keyboardType="number-pad"
-              maxLength={6}
-              value={pin}
-              onChangeText={setPin}
+              value={password}
+              onChangeText={setPassword}
             />
           </View>
 
@@ -267,21 +265,19 @@ export default function OnboardingScreen({ onAuthComplete }) {
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-closed-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
               <TextInput
-                placeholder="Confirm PIN"
+                placeholder="Confirm Password"
                 placeholderTextColor={COLORS.textSecondary}
                 secureTextEntry={true}
                 style={styles.textInput}
-                keyboardType="number-pad"
-                maxLength={6}
-                value={confirmPin}
-                onChangeText={setConfirmPin}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
               />
             </View>
           )}
 
           {isLoginState && (
             <TouchableOpacity style={styles.forgotBtn}>
-              <Text style={styles.forgotText}>Forgot PIN?</Text>
+              <Text style={styles.forgotText}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
 
