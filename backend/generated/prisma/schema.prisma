@@ -1,0 +1,120 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// User types: Passenger, Driver, Admin
+enum Role {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum DriverStatus {
+  INACTIVE
+  AVAILABLE
+  ON_TRIP
+  SUSPENDED
+}
+
+enum TripStatus {
+  REQUESTED
+  ACCEPTED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  MTN_MOMO
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+}
+
+model User {
+  id          String   @id @default(uuid())
+  phoneNumber String   @unique
+  fullName    String
+  pin         String // Hashed security PIN
+  role        Role     @default(PASSENGER)
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  passengerTrips Trip[]         @relation("PassengerTrips")
+  driverTrips    Trip[]         @relation("DriverTrips")
+  driverProfile  DriverProfile?
+}
+
+model DriverProfile {
+  id             String       @id @default(uuid())
+  userId         String       @unique
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nationalId     String       @unique
+  driversLicense String       @unique
+  isApproved     Boolean      @default(false)
+  status         DriverStatus @default(INACTIVE)
+  rating         Float        @default(5.0)
+  latitude       Float? // Live GPS Lat
+  longitude      Float? // Live GPS Lng
+  updatedAt      DateTime     @updatedAt
+}
+
+model Trip {
+  id              String     @id @default(uuid())
+  status          TripStatus @default(REQUESTED)
+  pickupName      String // e.g. "Kigali Heights"
+  pickupLat       Float
+  pickupLng       Float
+  destinationName String // e.g. "Nyamirambo"
+  destinationLat  Float
+  destinationLng  Float
+  estimatedFare   Float // Calculated dynamically
+  cancelReason    String?
+  createdAt       DateTime   @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  // Linking Passengers and Drivers
+  passengerId String
+  passenger   User    @relation("PassengerTrips", fields: [passengerId], references: [id])
+  driverId    String?
+  driver      User?   @relation("DriverTrips", fields: [driverId], references: [id])
+
+  // Payment link
+  payment Payment?
+  rating  Rating?
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  tripId        String        @unique
+  trip          Trip          @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  amount        Float
+  method        PaymentMethod @default(MTN_MOMO)
+  status        PaymentStatus @default(PENDING)
+  transactionId String?       @unique // Received from MTN API
+  createdAt     DateTime      @default(now())
+}
+
+model Rating {
+  id        String   @id @default(uuid())
+  tripId    String   @unique
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  score     Int // 1 to 5 stars
+  feedback  String?
+  createdAt DateTime @default(now())
+}
