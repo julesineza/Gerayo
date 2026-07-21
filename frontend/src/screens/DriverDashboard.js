@@ -1,15 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ScrollView, Vibration } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, ScrollView, Vibration, Alert } from 'react-native';
 import { COLORS } from '../theme/colors';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import MapMock from '../components/MapMock';
+import { useAuth } from '../contexts/AuthContext';
+import apiService from '../services/api';
 
 export default function DriverDashboard({ openWallet, triggerSOS, driverState, setDriverState }) {
-  const [isOnline, setIsOnline] = useState(true);
+  const { user } = useAuth();
+  const [isOnline, setIsOnline] = useState(false);
   const [countdown, setCountdown] = useState(15);
-  const [earnings, setEarnings] = useState(145.50);
-  const [tripsCompleted, setTripsCompleted] = useState(6);
-  const [hoursOnline, setHoursOnline] = useState(4.2);
+  const [earnings, setEarnings] = useState(0);
+  const [tripsCompleted, setTripsCompleted] = useState(0);
+  const [hoursOnline, setHoursOnline] = useState(0);
+  const [incomingTrip, setIncomingTrip] = useState(null);
+  const [activeTrip, setActiveTrip] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Ticking countdown timer when a request is incoming
   useEffect(() => {
@@ -32,33 +38,64 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
     };
   }, [driverState]);
 
-  const toggleOnline = () => {
+  const toggleOnline = async () => {
+    const newStatus = !isOnline ? 'AVAILABLE' : 'INACTIVE';
     setIsOnline(!isOnline);
-    if (isOnline) {
-      setDriverState('idle');
+    
+    try {
+      await apiService.updateDriverStatus(newStatus);
+      if (!isOnline) {
+        setDriverState('idle');
+      }
+    } catch (error) {
+      console.error('Error updating driver status:', error);
+      Alert.alert('Error', 'Failed to update online status');
+      setIsOnline(isOnline); // Revert on error
     }
   };
 
-  const handleAcceptRequest = () => {
+  const handleAcceptRequest = async () => {
+    if (!incomingTrip) return;
+
     try {
       Vibration.vibrate(100);
-    } catch(e){}
-    setDriverState('navigating_pickup');
+      await apiService.acceptTrip(incomingTrip.id);
+      setActiveTrip(incomingTrip);
+      setIncomingTrip(null);
+      setDriverState('navigating_pickup');
+    } catch (error) {
+      console.error('Error accepting trip:', error);
+      Alert.alert('Error', 'Failed to accept trip');
+    }
   };
 
   const handleDeclineRequest = () => {
+    setIncomingTrip(null);
     setDriverState('idle');
   };
 
   // Progression of the driver workflow
-  const handleWorkflowNext = () => {
-    if (driverState === 'navigating_pickup') {
-      setDriverState('navigating_destination');
-    } else if (driverState === 'navigating_destination') {
-      // Complete trip: update earnings
-      setEarnings((prev) => prev + 20.00);
-      setTripsCompleted((prev) => prev + 1);
-      setDriverState('idle');
+  const handleWorkflowNext = async () => {
+    if (!activeTrip) return;
+
+    setIsLoading(true);
+    try {
+      if (driverState === 'navigating_pickup') {
+        await apiService.startTrip(activeTrip.id);
+        setDriverState('navigating_destination');
+      } else if (driverState === 'navigating_destination') {
+        await apiService.completeTrip(activeTrip.id);
+        // Update earnings locally (would come from backend)
+        setEarnings((prev) => prev + (activeTrip.estimatedFare || 20));
+        setTripsCompleted((prev) => prev + 1);
+        setActiveTrip(null);
+        setDriverState('idle');
+      }
+    } catch (error) {
+      console.error('Error updating trip status:', error);
+      Alert.alert('Error', 'Failed to update trip status');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -85,10 +122,14 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
               <MaterialCommunityIcons name="steering" size={16} color={COLORS.black} />
             </View>
             <View>
-              <Text style={styles.welcomeText}>Maurice (Sober Driver)</Text>
+              <Text style={styles.welcomeText}>
+                {user?.fullName?.split(' ')[0] || 'Driver'} (Sober Driver)
+              </Text>
               <View style={styles.ratingRow}>
                 <Ionicons name="star" size={10} color={COLORS.primary} />
-                <Text style={styles.ratingText}>4.9 Rating</Text>
+                <Text style={styles.ratingText}>
+                  {user?.driverProfile?.rating ? `${user.driverProfile.rating.toFixed(1)} Rating` : 'New Driver'}
+                </Text>
               </View>
             </View>
           </View>
@@ -138,12 +179,12 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
               </View>
             </View>
 
-            {/* Simulation trigger to mock incoming request */}
+            {/* Waiting for requests indicator */}
             {isOnline && (
-              <TouchableOpacity style={styles.simulateRequestBtn} onPress={() => setDriverState('incoming')}>
-                <Ionicons name="flash-sharp" size={18} color={COLORS.black} style={{ marginRight: 6 }} />
-                <Text style={styles.simulateRequestText}>SIMULATE INCOMING REQUEST</Text>
-              </TouchableOpacity>
+              <View style={styles.waitingIndicator}>
+                <ActivityIndicator size="small" color={COLORS.secondary} />
+                <Text style={styles.waitingText}>Waiting for trip requests...</Text>
+              </View>
             )}
           </View>
         ) : driverState === 'incoming' ? (
@@ -159,25 +200,35 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
               </View>
             </View>
 
-            <Text style={styles.payoutAmount}>+ $20.00 Est. Payout</Text>
-            <Text style={styles.jobDistance}>1.8 miles away • Client needs drive home</Text>
+            <Text style={styles.payoutAmount}>
+              + ${incomingTrip?.estimatedFare ? incomingTrip.estimatedFare.toFixed(2) : '0.00'} Est. Payout
+            </Text>
+            <Text style={styles.jobDistance}>
+              {incomingTrip?.distance ? `${incomingTrip.distance.toFixed(1)} miles` : 'Calculating'} away • Client needs drive home
+            </Text>
 
             {/* Address Summary */}
             <View style={styles.routeCard}>
               <View style={styles.routePoint}>
                 <Ionicons name="location-sharp" size={16} color={COLORS.secondary} />
-                <Text style={styles.routeText} numberOfLines={1}>Pickup: Cadillac Club, Kiyovu</Text>
+                <Text style={styles.routeText} numberOfLines={1}>
+                  Pickup: {incomingTrip?.pickupName || 'Client Location'}
+                </Text>
               </View>
               <View style={styles.routeConnector} />
               <View style={styles.routePoint}>
                 <Ionicons name="flag-checkered" size={16} color={COLORS.primary} />
-                <Text style={styles.routeText} numberOfLines={1}>Dropoff: Nyarutarama (Client's Home)</Text>
+                <Text style={styles.routeText} numberOfLines={1}>
+                  Dropoff: {incomingTrip?.destinationName || 'Client Destination'}
+                </Text>
               </View>
             </View>
 
             <View style={styles.clientDetail}>
               <Text style={styles.clientLabel}>CLIENT VEHICLE TO BE DRIVEN:</Text>
-              <Text style={styles.clientVehicle}>Toyota Land Cruiser Prado (KBX 123A)</Text>
+              <Text style={styles.clientVehicle}>
+                {incomingTrip?.vehicleInfo || 'Client Vehicle'}
+              </Text>
             </View>
 
             {/* Action buttons */}
@@ -211,8 +262,13 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
                 <Ionicons name="person" size={20} color={COLORS.white} />
               </View>
               <View style={styles.clientDetails}>
-                <Text style={styles.clientName}>John Doe</Text>
-                <Text style={styles.clientSub}>Owner of Toyota Prado • 4.8⭐ Client</Text>
+                <Text style={styles.clientName}>
+                  {activeTrip?.passenger?.fullName || 'Client'}
+                </Text>
+                <Text style={styles.clientSub}>
+                  Owner of {activeTrip?.vehicleInfo || 'Client Vehicle'} • 
+                  {activeTrip?.passenger?.rating ? ` ${activeTrip.passenger.rating.toFixed(1)}⭐` : ' New'} Client
+                </Text>
               </View>
               <View style={styles.clientActionRow}>
                 <TouchableOpacity style={styles.clientSubAction}>
@@ -232,7 +288,20 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
               <Ionicons name="arrow-forward-circle" size={22} color={COLORS.black} style={{ marginLeft: 8 }} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.abortBtn} onPress={() => setDriverState('idle')}>
+            <TouchableOpacity 
+              style={styles.abortBtn} 
+              onPress={async () => {
+                if (activeTrip) {
+                  try {
+                    await apiService.cancelTrip(activeTrip.id, 'Driver cancelled');
+                  } catch (error) {
+                    console.error('Error cancelling trip:', error);
+                  }
+                }
+                setActiveTrip(null);
+                setDriverState('idle');
+              }}
+            >
               <Text style={styles.abortBtnText}>Abort / Cancel Ride</Text>
             </TouchableOpacity>
           </View>
@@ -460,6 +529,23 @@ const styles = StyleSheet.create({
     color: COLORS.black,
     fontWeight: 'bold',
     fontSize: 13,
+  },
+  waitingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.background,
+    paddingVertical: 14,
+    borderRadius: 12,
+    height: 48,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  waitingText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    marginLeft: 10,
   },
   incomingWrapper: {
     paddingVertical: 10,

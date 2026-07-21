@@ -3,24 +3,45 @@ import { View, StyleSheet, Text, TouchableOpacity, TextInput, ScrollView, Image,
 import { COLORS } from '../theme/colors';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import MapMock from '../components/MapMock';
+import { useAuth } from '../contexts/AuthContext';
+import apiService from '../services/api';
 
 export default function PassengerHomeScreen({ openWallet, triggerSOS, activeState, setActiveState }) {
+  const { user } = useAuth();
+  
   // State for search query and booking variables
   const [destination, setDestination] = useState('');
-  const [selectedDestText, setSelectedDestText] = useState('Home (Nyarutarama)');
-  const [paymentMethod, setPaymentMethod] = useState('Visa •••• 4242');
+  const [selectedDestText, setSelectedDestText] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('MTN Mobile Money');
   const [driverRating, setDriverRating] = useState(0);
   const [ratingCompleted, setRatingCompleted] = useState(false);
+  const [activeTrip, setActiveTrip] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
 
-  // Auto transition from matching to active ride in the demo
+  // Load active trip on mount
   useEffect(() => {
-    if (activeState === 'matching') {
-      const timer = setTimeout(() => {
-        setActiveState('active');
-      }, 4000);
-      return () => clearTimeout(timer);
+    loadActiveTrip();
+  }, []);
+
+  const loadActiveTrip = async () => {
+    try {
+      const trip = await apiService.getActiveTrip();
+      if (trip) {
+        setActiveTrip(trip);
+        // Set appropriate state based on trip status
+        if (trip.status === 'REQUESTED') {
+          setActiveState('matching');
+        } else if (trip.status === 'ACCEPTED' || trip.status === 'STARTED') {
+          setActiveState('active');
+        } else if (trip.status === 'COMPLETED') {
+          setActiveState('receipt');
+        }
+      }
+    } catch (error) {
+      console.error('Error loading active trip:', error);
     }
-  }, [activeState]);
+  };
 
   const selectRecent = (dest) => {
     setDestination(dest);
@@ -28,22 +49,77 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
     setActiveState('booking');
   };
 
-  const handleConfirmRide = () => {
+  const handleConfirmRide = async () => {
+    if (!destination) {
+      alert('Please enter a destination');
+      return;
+    }
+
+    setIsLoading(true);
     setActiveState('matching');
-  };
 
-  const handleCompleteRide = () => {
-    setActiveState('receipt');
-  };
+    try {
+      // This would use real location data from GPS
+      const tripData = {
+        pickupName: 'Current Location',
+        pickupLat: -1.9562, // Example Kigali coordinates
+        pickupLng: 30.0592,
+        destinationName: selectedDestText || destination,
+        destinationLat: -1.9444, // Example destination
+        destinationLng: 30.0615,
+      };
 
-  const handleFinishRating = () => {
-    setRatingCompleted(true);
-    setTimeout(() => {
+      const response = await apiService.createTrip(tripData);
+      setActiveTrip(response);
+    } catch (error) {
+      console.error('Error creating trip:', error);
+      alert('Failed to create trip. Please try again.');
       setActiveState('home');
-      setDestination('');
-      setDriverRating(0);
-      setRatingCompleted(false);
-    }, 1500);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCompleteRide = async () => {
+    if (!activeTrip) return;
+
+    setIsLoading(true);
+    try {
+      await apiService.completeTrip(activeTrip.id);
+      setActiveState('receipt');
+    } catch (error) {
+      console.error('Error completing trip:', error);
+      alert('Failed to complete trip. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleFinishRating = async () => {
+    if (!activeTrip || driverRating === 0) return;
+
+    setIsLoading(true);
+    try {
+      await apiService.submitRating({
+        tripId: activeTrip.id,
+        score: driverRating,
+      });
+      
+      setRatingCompleted(true);
+      setTimeout(() => {
+        setActiveState('home');
+        setDestination('');
+        setSelectedDestText('');
+        setDriverRating(0);
+        setRatingCompleted(false);
+        setActiveTrip(null);
+      }, 1500);
+    } catch (error) {
+      console.error('Error submitting rating:', error);
+      alert('Failed to submit rating. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -58,10 +134,12 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
         <View style={styles.topNavBar}>
           <View style={styles.navProfile}>
             <View style={styles.profileAvatar}>
-              <Text style={styles.profileAvatarText}>JD</Text>
+              <Text style={styles.profileAvatarText}>
+                {user?.fullName?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
+              </Text>
             </View>
             <View>
-              <Text style={styles.welcomeText}>Hello, John</Text>
+              <Text style={styles.welcomeText}>Hello, {user?.fullName?.split(' ')[0] || 'User'}</Text>
               <View style={styles.statusBadge}>
                 <View style={styles.statusDot} />
                 <Text style={styles.statusText}>SafeSec Shield Active</Text>
@@ -70,7 +148,7 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
           </View>
           <TouchableOpacity style={styles.walletShortcut} onPress={openWallet}>
             <Ionicons name="wallet" size={20} color={COLORS.primary} />
-            <Text style={styles.walletShortcutText}>$56.50</Text>
+            <Text style={styles.walletShortcutText}>{walletBalance > 0 ? `$${walletBalance.toFixed(2)}` : '$0.00'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -116,20 +194,20 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               />
             </View>
 
-            {/* Recents List */}
+            {/* Recents List - would be loaded from backend */}
             <Text style={styles.recentsTitle}>Recent Destinations</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recentsScroll}>
-              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('Home (Nyarutarama)')}>
+              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('Home')}>
                 <Ionicons name="home-outline" size={16} color={COLORS.primary} style={styles.recentIcon} />
                 <Text style={styles.recentText}>Home</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('The Lounge, Kiyovu')}>
-                <Ionicons name="beer-outline" size={16} color={COLORS.primary} style={styles.recentIcon} />
-                <Text style={styles.recentText}>The Lounge</Text>
+              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('Work')}>
+                <Ionicons name="briefcase-outline" size={16} color={COLORS.primary} style={styles.recentIcon} />
+                <Text style={styles.recentText}>Work</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('Grand Plaza Hotel')}>
-                <Ionicons name="business-outline" size={16} color={COLORS.primary} style={styles.recentIcon} />
-                <Text style={styles.recentText}>Grand Plaza</Text>
+              <TouchableOpacity style={styles.recentItem} onPress={() => selectRecent('Airport')}>
+                <Ionicons name="airplane-outline" size={16} color={COLORS.primary} style={styles.recentIcon} />
+                <Text style={styles.recentText}>Airport</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -150,12 +228,12 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
             <View style={styles.routeSummaryCard}>
               <View style={styles.routePointRow}>
                 <View style={[styles.routeDot, { backgroundColor: COLORS.secondary }]} />
-                <Text style={styles.routePointText} numberOfLines={1}>Current: Cadillac Club, Kiyovu</Text>
+                <Text style={styles.routePointText} numberOfLines={1}>Current: Your Location</Text>
               </View>
               <View style={styles.routeLine} />
               <View style={styles.routePointRow}>
                 <View style={[styles.routeDot, { backgroundColor: COLORS.primary }]} />
-                <Text style={styles.routePointText} numberOfLines={1}>To: {selectedDestText}</Text>
+                <Text style={styles.routePointText} numberOfLines={1}>To: {selectedDestText || destination}</Text>
               </View>
             </View>
 
@@ -164,12 +242,12 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               <View style={styles.detailCard}>
                 <Ionicons name="time" size={18} color={COLORS.primary} />
                 <Text style={styles.detailLabel}>DRIVER ETA</Text>
-                <Text style={styles.detailValue}>6 mins</Text>
+                <Text style={styles.detailValue}>Calculating...</Text>
               </View>
               <View style={styles.detailCard}>
                 <Ionicons name="cash" size={18} color={COLORS.primary} />
                 <Text style={styles.detailLabel}>FIXED FARE</Text>
-                <Text style={styles.detailValue}>$25.00</Text>
+                <Text style={styles.detailValue}>TBD</Text>
               </View>
             </View>
 
@@ -194,13 +272,22 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
             <ActivityIndicator size="large" color={COLORS.primary} style={{ marginBottom: 20 }} />
             <Text style={styles.matchingTitle}>DISPATCHING SOBER DRIVER</Text>
             <Text style={styles.matchingDesc}>
-              Scanning Kigali drivers close to Cadillac Club. Average response time: 3 min.
+              Finding available drivers near your location. Please wait...
             </Text>
             <View style={styles.securitySeal}>
               <Ionicons name="shield-checkmark" size={16} color={COLORS.success} />
               <Text style={styles.securitySealText}>Secure Matching Guarantee</Text>
             </View>
-            <TouchableOpacity style={styles.cancelMatchingBtn} onPress={() => setActiveState('home')}>
+            <TouchableOpacity 
+              style={styles.cancelMatchingBtn} 
+              onPress={() => {
+                if (activeTrip) {
+                  apiService.cancelTrip(activeTrip.id, 'User cancelled');
+                }
+                setActiveState('home');
+                setActiveTrip(null);
+              }}
+            >
               <Text style={styles.cancelMatchingText}>Cancel Request</Text>
             </TouchableOpacity>
           </View>
@@ -223,10 +310,14 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
                 <Ionicons name="person" size={24} color={COLORS.white} />
               </View>
               <View style={styles.driverInfo}>
-                <Text style={styles.driverName}>Maurice Nsengimana</Text>
+                <Text style={styles.driverName}>
+                  {activeTrip?.driver?.fullName || 'Driver Assigned'}
+                </Text>
                 <View style={styles.driverRatingRow}>
                   <Ionicons name="star" size={12} color={COLORS.primary} />
-                  <Text style={styles.driverRatingText}>4.9 (180+ trips) • Vetted Expert</Text>
+                  <Text style={styles.driverRatingText}>
+                    {activeTrip?.driver?.rating ? `${activeTrip.driver.rating.toFixed(1)} Rating` : 'New Driver'}
+                  </Text>
                 </View>
               </View>
               <TouchableOpacity style={styles.callDriverBtn}>
@@ -238,10 +329,14 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
             <View style={styles.vehicleInfoCard}>
               <View style={styles.vehicleDetails}>
                 <Text style={styles.vehicleTitle}>YOUR VEHICLE TO BE DRIVEN</Text>
-                <Text style={styles.vehicleDetailsText}>Toyota Land Cruiser Prado (KBX 123A)</Text>
+                <Text style={styles.vehicleDetailsText}>
+                  {activeTrip?.vehicleInfo || 'Your vehicle'}
+                </Text>
               </View>
               <View style={styles.plateBadge}>
-                <Text style={styles.plateText}>KBX 123A</Text>
+                <Text style={styles.plateText}>
+                  {activeTrip?.plateNumber || 'TBD'}
+                </Text>
               </View>
             </View>
 
@@ -258,7 +353,9 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
             <View style={styles.successRibbon}>
               <Ionicons name="checkmark-done-circle" size={54} color={COLORS.success} />
               <Text style={styles.successTitle}>WELCOME HOME SAFE!</Text>
-              <Text style={styles.successSubtitle}>Ride completed on July 16, 2026</Text>
+              <Text style={styles.successSubtitle}>
+                Ride completed on {new Date().toLocaleDateString()}
+              </Text>
             </View>
 
             {/* Receipt Summary */}
@@ -266,25 +363,33 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               <Text style={styles.receiptHeader}>RECEIPT BREAKDOWN</Text>
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Base Safe Dispatched Fee</Text>
-                <Text style={styles.receiptValue}>$15.00</Text>
+                <Text style={styles.receiptValue}>
+                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.6).toFixed(2) : '0.00'}
+                </Text>
               </View>
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Distance Charge (Kiyovu ➔ Nyarutarama)</Text>
-                <Text style={styles.receiptValue}>$8.00</Text>
+                <Text style={styles.receiptLabel}>Distance Charge</Text>
+                <Text style={styles.receiptValue}>
+                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.3).toFixed(2) : '0.00'}
+                </Text>
               </View>
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Emergency SOS / SafeSec Levy</Text>
-                <Text style={styles.receiptValue}>$2.00</Text>
+                <Text style={styles.receiptValue}>
+                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.1).toFixed(2) : '0.00'}
+                </Text>
               </View>
               <View style={[styles.receiptRow, styles.receiptTotalRow]}>
                 <Text style={styles.totalLabel}>Total Charge (Auto-Paid)</Text>
-                <Text style={styles.totalValue}>$25.00</Text>
+                <Text style={styles.totalValue}>
+                  ${activeTrip?.estimatedFare ? activeTrip.estimatedFare.toFixed(2) : '0.00'}
+                </Text>
               </View>
-              <Text style={styles.paymentSourceText}>Charged to Visa ending in 4242</Text>
+              <Text style={styles.paymentSourceText}>Charged to {paymentMethod}</Text>
             </View>
 
             {/* Star Rating Feedback */}
-            <Text style={styles.rateTitle}>Rate Maurice's Driving</Text>
+            <Text style={styles.rateTitle}>Rate Your Driver</Text>
             {!ratingCompleted ? (
               <View style={styles.ratingForm}>
                 <View style={styles.starsRow}>

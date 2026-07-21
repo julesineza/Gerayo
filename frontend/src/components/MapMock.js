@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from "react";
 import { View, StyleSheet, Text, Animated, Dimensions } from 'react-native';
+import MapView, { Marker } from "react-native-maps";
 import { COLORS } from '../theme/colors';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -51,7 +52,7 @@ export default function MapMock({ rideState }) {
 
   // Interpolate coordinates for the vehicle movement
   const vehicleX = driveAnim.interpolate({
-    inputRange: [0, 0.4, 0.7, 1],
+    inputRange: [0, 0.4, 0.7, 2],
     outputRange: [50, 120, 220, 290], // Road pathway positions
   });
 

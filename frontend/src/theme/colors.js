@@ -2,7 +2,7 @@ export const COLORS = {
   background: '#070E17',
   surface: '#0E1A2B',
   surfaceCard: '#132239',
-  primary: '#FFB800', // Gold
+  primary: '#00bfffff', // Gold
   secondary: '#00D2B8', // Teal
   danger: '#FF453A', // SOS Red
   textPrimary: '#FFFFFF',

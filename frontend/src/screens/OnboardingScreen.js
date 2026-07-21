@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, TextInput, ScrollView, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, TextInput, ScrollView, Dimensions, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { COLORS } from '../theme/colors';
 import { Ionicons, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
 
 const { width } = Dimensions.get('window');
 
@@ -27,14 +28,17 @@ const ONBOARDING_SLIDES = [
 ];
 
 export default function OnboardingScreen({ onAuthComplete }) {
+  const { login, register } = useAuth();
   const [slideIndex, setSlideIndex] = useState(0);
   const [showLogin, setShowLogin] = useState(false);
   const [isLoginState, setIsLoginState] = useState(true); // Toggle between Login and Sign Up
   const [selectedRole, setSelectedRole] = useState('passenger'); // 'passenger' or 'driver'
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Input states
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Input states - changed to phone + PIN
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [fullName, setFullName] = useState('');
 
   const handleNextSlide = () => {
@@ -49,14 +53,55 @@ export default function OnboardingScreen({ onAuthComplete }) {
     setShowLogin(true);
   };
 
-  const handleAuthSubmit = () => {
-    // Perform basic mock validation
-    if (!email || !password || (!isLoginState && !fullName)) {
-      alert('Please fill in all fields.');
+  const handleAuthSubmit = async () => {
+    // Validation
+    if (!phoneNumber || !pin) {
+      Alert.alert('Error', 'Please fill in all required fields.');
       return;
     }
-    // Simulate successful authentication
-    onAuthComplete(selectedRole, { email, fullName: fullName || 'Premium User' });
+
+    // Phone number validation (basic)
+    if (!/^\+?[0-9]{10,15}$/.test(phoneNumber)) {
+      Alert.alert('Error', 'Please enter a valid phone number.');
+      return;
+    }
+
+    // PIN validation
+    if (pin.length < 4) {
+      Alert.alert('Error', 'PIN must be at least 4 digits.');
+      return;
+    }
+
+    if (!isLoginState && pin !== confirmPin) {
+      Alert.alert('Error', 'PINs do not match.');
+      return;
+    }
+
+    if (!isLoginState && !fullName) {
+      Alert.alert('Error', 'Please enter your full name.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      let result;
+      if (isLoginState) {
+        result = await login(phoneNumber, pin);
+      } else {
+        result = await register(phoneNumber, fullName, pin, selectedRole.toUpperCase());
+      }
+
+      if (result.success) {
+        onAuthComplete(selectedRole, result.user);
+      } else {
+        Alert.alert('Authentication Failed', result.message);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!showLogin) {
@@ -192,33 +237,51 @@ export default function OnboardingScreen({ onAuthComplete }) {
           )}
 
           <View style={styles.inputWrapper}>
-            <Ionicons name="mail-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
+            <Ionicons name="call-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
             <TextInput
-              placeholder="Email Address"
+              placeholder="Phone Number"
               placeholderTextColor={COLORS.textSecondary}
               style={styles.textInput}
-              keyboardType="email-address"
+              keyboardType="phone-pad"
               autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
             />
           </View>
 
           <View style={styles.inputWrapper}>
             <Ionicons name="lock-closed-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
             <TextInput
-              placeholder="Password"
+              placeholder="PIN (4+ digits)"
               placeholderTextColor={COLORS.textSecondary}
               secureTextEntry={true}
               style={styles.textInput}
-              value={password}
-              onChangeText={setPassword}
+              keyboardType="number-pad"
+              maxLength={6}
+              value={pin}
+              onChangeText={setPin}
             />
           </View>
 
+          {!isLoginState && (
+            <View style={styles.inputWrapper}>
+              <Ionicons name="lock-closed-outline" size={18} color={COLORS.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                placeholder="Confirm PIN"
+                placeholderTextColor={COLORS.textSecondary}
+                secureTextEntry={true}
+                style={styles.textInput}
+                keyboardType="number-pad"
+                maxLength={6}
+                value={confirmPin}
+                onChangeText={setConfirmPin}
+              />
+            </View>
+          )}
+
           {isLoginState && (
             <TouchableOpacity style={styles.forgotBtn}>
-              <Text style={styles.forgotText}>Forgot Password?</Text>
+              <Text style={styles.forgotText}>Forgot PIN?</Text>
             </TouchableOpacity>
           )}
 
@@ -227,31 +290,19 @@ export default function OnboardingScreen({ onAuthComplete }) {
             style={[
               styles.submitBtn,
               { backgroundColor: selectedRole === 'passenger' ? COLORS.primary : COLORS.secondary },
+              isLoading && styles.submitBtnDisabled,
             ]}
             onPress={handleAuthSubmit}
+            disabled={isLoading}
           >
-            <Text style={styles.submitBtnText}>
-              {isLoginState ? 'Access Account' : 'Create Account'}
-            </Text>
+            {isLoading ? (
+              <Text style={styles.submitBtnText}>Processing...</Text>
+            ) : (
+              <Text style={styles.submitBtnText}>
+                {isLoginState ? 'Access Account' : 'Create Account'}
+              </Text>
+            )}
           </TouchableOpacity>
-
-          {/* Social Sign-in alternatives */}
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or continue with</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <View style={styles.socialRow}>
-            <TouchableOpacity style={styles.socialBtn}>
-              <Ionicons name="logo-apple" size={20} color={COLORS.white} />
-              <Text style={styles.socialBtnText}>Apple</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.socialBtn}>
-              <FontAwesome name="google" size={18} color={COLORS.white} />
-              <Text style={styles.socialBtnText}>Google</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -498,41 +549,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 0.5,
   },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 25,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: COLORS.border,
-  },
-  dividerText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    paddingHorizontal: 12,
-  },
-  socialRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  socialBtn: {
-    flex: 0.47,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    height: 48,
-  },
-  socialBtnText: {
-    color: COLORS.white,
-    fontWeight: 'bold',
-    fontSize: 13,
-    marginLeft: 10,
+  submitBtnDisabled: {
+    opacity: 0.6,
   },
 });
