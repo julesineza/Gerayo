@@ -10,7 +10,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
 }
 // User types: Passenger, Driver, Admin
 enum Role {
@@ -47,7 +46,7 @@ enum PaymentStatus {
 
 model User {
   id            String   @id @default(uuid())
-  phoneNumber   String   @unique
+  email   String   @unique
   fullName      String
   pin           String   // Hashed security PIN
   role          Role     @default(PASSENGER)
