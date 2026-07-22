@@ -41,6 +41,8 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error loading token:', error);
+      // Don't block app if AsyncStorage fails
+      setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
     }
@@ -51,8 +53,13 @@ export const AuthProvider = ({ children }) => {
       const response = await apiService.login({ email, password });
       
       if (response.session?.access_token && response.user) {
-        await AsyncStorage.setItem('auth_token', response.session.access_token);
-        await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
+        try {
+          await AsyncStorage.setItem('auth_token', response.session.access_token);
+          await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
+        } catch (storageError) {
+          console.error('AsyncStorage error:', storageError);
+          // Continue anyway - app will work without persistent storage
+        }
         
         setToken(response.session.access_token);
         setUser(response.user);
@@ -82,8 +89,13 @@ export const AuthProvider = ({ children }) => {
       });
       
       if (response.session?.access_token && response.user) {
-        await AsyncStorage.setItem('auth_token', response.session.access_token);
-        await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
+        try {
+          await AsyncStorage.setItem('auth_token', response.session.access_token);
+          await AsyncStorage.setItem('auth_user', JSON.stringify(response.user));
+        } catch (storageError) {
+          console.error('AsyncStorage error:', storageError);
+          // Continue anyway - app will work without persistent storage
+        }
         
         setToken(response.session.access_token);
         setUser(response.user);

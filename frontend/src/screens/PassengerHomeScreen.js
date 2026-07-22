@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, TextInput, ScrollView, Image, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator } from 'react-native';
 import { COLORS } from '../theme/colors';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import MapMock from '../components/MapMock';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
+import socketService from '../services/socket';
+import { getCurrentLocation } from '../utils/location';
+import { resolveDestination, estimateFare, formatRwf } from '../constants/destinations';
 
-export default function PassengerHomeScreen({ openWallet, triggerSOS, activeState, setActiveState }) {
+export default function PassengerHomeScreen({ triggerSOS, activeState, setActiveState }) {
   const { user } = useAuth();
   
   // State for search query and booking variables
@@ -17,30 +20,104 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
   const [ratingCompleted, setRatingCompleted] = useState(false);
   const [activeTrip, setActiveTrip] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [walletBalance, setWalletBalance] = useState(0);
+  const [pickupLocation, setPickupLocation] = useState(null);
+  const [driverLocation, setDriverLocation] = useState(null);
+  const [estimatedFare, setEstimatedFare] = useState(null);
 
-  // Load active trip on mount
+  const applyTripUpdate = useCallback((trip) => {
+    if (!trip) return;
+    setActiveTrip(trip);
+    if (trip.status === 'REQUESTED') {
+      setActiveState('matching');
+    } else if (trip.status === 'ACCEPTED' || trip.status === 'STARTED') {
+      setActiveState('active');
+      if (trip.driver?.latitude != null && trip.driver?.longitude != null) {
+        setDriverLocation({ latitude: trip.driver.latitude, longitude: trip.driver.longitude });
+      }
+    } else if (trip.status === 'COMPLETED') {
+      setActiveState('receipt');
+    } else if (trip.status === 'CANCELLED') {
+      setActiveState('home');
+      setActiveTrip(null);
+      setDriverLocation(null);
+    }
+  }, [setActiveState]);
+
   useEffect(() => {
+    getCurrentLocation().then(setPickupLocation);
     loadActiveTrip();
   }, []);
+
+  useEffect(() => {
+    if (!pickupLocation || !(selectedDestText || destination)) return;
+    const dest = resolveDestination(selectedDestText || destination);
+    setEstimatedFare(
+      estimateFare(pickupLocation.latitude, pickupLocation.longitude, dest.lat, dest.lng)
+    );
+  }, [pickupLocation, selectedDestText, destination]);
+
+  useEffect(() => {
+    if (!activeTrip?.id) return;
+
+    socketService.joinTripRoom(activeTrip.id);
+
+    socketService.onTripStatusUpdate(activeTrip.id, applyTripUpdate);
+    socketService.onLocationUpdate(activeTrip.id, (loc) => {
+      setDriverLocation({ latitude: loc.latitude, longitude: loc.longitude });
+    });
+
+    return () => {
+      socketService.offTripStatusUpdate(activeTrip.id);
+      socketService.offLocationUpdate(activeTrip.id);
+      socketService.leaveTripRoom(activeTrip.id);
+    };
+  }, [activeTrip?.id, applyTripUpdate]);
+
+  useEffect(() => {
+    if (!activeTrip?.id || activeState === 'home' || activeState === 'receipt') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const trip = await apiService.getTrip(activeTrip.id);
+        applyTripUpdate(trip);
+      } catch (error) {
+        console.error('Trip poll error:', error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeTrip?.id, activeState, applyTripUpdate]);
 
   const loadActiveTrip = async () => {
     try {
       const trip = await apiService.getActiveTrip();
       if (trip) {
-        setActiveTrip(trip);
-        // Set appropriate state based on trip status
-        if (trip.status === 'REQUESTED') {
-          setActiveState('matching');
-        } else if (trip.status === 'ACCEPTED' || trip.status === 'STARTED') {
-          setActiveState('active');
-        } else if (trip.status === 'COMPLETED') {
-          setActiveState('receipt');
-        }
+        applyTripUpdate(trip);
       }
     } catch (error) {
       console.error('Error loading active trip:', error);
     }
+  };
+
+  const getMapPhase = () => {
+    if (!activeTrip || activeState === 'home' || activeState === 'booking') return 'idle';
+    if (activeState === 'matching') return 'matching';
+    if (activeTrip.status === 'STARTED') return 'enroute';
+    if (activeTrip.status === 'ACCEPTED') return 'pickup';
+    return 'matching';
+  };
+
+  const getDestinationCoords = () => {
+    if (activeTrip) {
+      return {
+        latitude: activeTrip.destinationLat,
+        longitude: activeTrip.destinationLng,
+        name: activeTrip.destinationName,
+      };
+    }
+    if (!(selectedDestText || destination)) return null;
+    const dest = resolveDestination(selectedDestText || destination);
+    return { latitude: dest.lat, longitude: dest.lng, name: dest.name };
   };
 
   const selectRecent = (dest) => {
@@ -59,18 +136,19 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
     setActiveState('matching');
 
     try {
-      // This would use real location data from GPS
+      const dest = resolveDestination(selectedDestText || destination);
       const tripData = {
-        pickupName: 'Current Location',
-        pickupLat: -1.9562, // Example Kigali coordinates
-        pickupLng: 30.0592,
-        destinationName: selectedDestText || destination,
-        destinationLat: -1.9444, // Example destination
-        destinationLng: 30.0615,
+        pickupName: pickupLocation?.name || 'Current Location',
+        pickupLat: pickupLocation?.latitude ?? -1.9441,
+        pickupLng: pickupLocation?.longitude ?? 30.0619,
+        destinationName: dest.name,
+        destinationLat: dest.lat,
+        destinationLng: dest.lng,
       };
 
       const response = await apiService.createTrip(tripData);
       setActiveTrip(response);
+      socketService.joinTripRoom(response.id);
     } catch (error) {
       console.error('Error creating trip:', error);
       alert('Failed to create trip. Please try again.');
@@ -80,29 +158,23 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
     }
   };
 
-  const handleCompleteRide = async () => {
-    if (!activeTrip) return;
-
-    setIsLoading(true);
-    try {
-      await apiService.completeTrip(activeTrip.id);
-      setActiveState('receipt');
-    } catch (error) {
-      console.error('Error completing trip:', error);
-      alert('Failed to complete trip. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleFinishRating = async () => {
-    if (!activeTrip || driverRating === 0) return;
+    if (!activeTrip) {
+      setActiveState('home');
+      setDestination('');
+      setSelectedDestText('');
+      setDriverRating(0);
+      setRatingCompleted(false);
+      return;
+    }
 
     setIsLoading(true);
     try {
-      await apiService.submitRating({
-        tripId: activeTrip.id,
-        score: driverRating,
+      // Process payment for the completed trip
+      const method = paymentMethod?.includes('Cash') ? 'CASH' : 'MTN_MOMO';
+      await apiService.processPayment(activeTrip.id, {
+        method,
+        phone: user?.email || '0780000000',
       });
       
       setRatingCompleted(true);
@@ -115,8 +187,16 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
         setActiveTrip(null);
       }, 1500);
     } catch (error) {
-      console.error('Error submitting rating:', error);
-      alert('Failed to submit rating. Please try again.');
+      console.error('Error processing payment/rating:', error);
+      setRatingCompleted(true);
+      setTimeout(() => {
+        setActiveState('home');
+        setDestination('');
+        setSelectedDestText('');
+        setDriverRating(0);
+        setRatingCompleted(false);
+        setActiveTrip(null);
+      }, 1500);
     } finally {
       setIsLoading(false);
     }
@@ -126,7 +206,12 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
     <View style={styles.container}>
       {/* Dynamic Map Component */}
       <View style={styles.mapContainer}>
-        <MapMock rideState={activeState} />
+        <MapMock
+          pickup={pickupLocation || (activeTrip ? { latitude: activeTrip.pickupLat, longitude: activeTrip.pickupLng, name: activeTrip.pickupName } : null)}
+          destination={getDestinationCoords()}
+          driverLocation={driverLocation}
+          phase={getMapPhase()}
+        />
       </View>
 
       {/* Top Floating Nav Bar (Hidden in matching/active SOS modes for clean navigation) */}
@@ -146,10 +231,6 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               </View>
             </View>
           </View>
-          <TouchableOpacity style={styles.walletShortcut} onPress={openWallet}>
-            <Ionicons name="wallet" size={20} color={COLORS.primary} />
-            <Text style={styles.walletShortcutText}>{walletBalance > 0 ? `$${walletBalance.toFixed(2)}` : '$0.00'}</Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -188,7 +269,9 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
                 onChangeText={(text) => {
                   setDestination(text);
                   setSelectedDestText(text || 'Custom Location');
-                  if (text.length > 0) setActiveState('booking');
+                }}
+                onSubmitEditing={() => {
+                  if (destination.length > 0) setActiveState('booking');
                 }}
                 style={styles.searchInput}
               />
@@ -247,22 +330,23 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               <View style={styles.detailCard}>
                 <Ionicons name="cash" size={18} color={COLORS.primary} />
                 <Text style={styles.detailLabel}>FIXED FARE</Text>
-                <Text style={styles.detailValue}>TBD</Text>
+                <Text style={styles.detailValue}>{formatRwf(estimatedFare)}</Text>
               </View>
             </View>
 
-            {/* Payment Picker */}
-            <TouchableOpacity style={styles.paymentPicker} onPress={openWallet}>
+            {/* Payment Method Display */}
+            <View style={styles.paymentDisplay}>
               <View style={styles.paymentLeft}>
                 <Ionicons name="card" size={18} color={COLORS.primary} />
                 <Text style={styles.paymentText}>{paymentMethod}</Text>
               </View>
-              <Text style={styles.changePaymentText}>Change</Text>
-            </TouchableOpacity>
+            </View>
 
             {/* Tap 3: Dispatch Driver */}
-            <TouchableOpacity style={styles.confirmRideBtn} onPress={handleConfirmRide}>
-              <Text style={styles.confirmRideText}>CONFIRM SOBER DRIVER</Text>
+            <TouchableOpacity style={styles.confirmRideBtn} onPress={handleConfirmRide} disabled={isLoading}>
+              <Text style={styles.confirmRideText}>
+                {isLoading ? 'DISPATCHING...' : 'CONFIRM SOBER DRIVER'}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -301,7 +385,9 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
                 <View style={styles.pulseBeacon} />
                 <Text style={styles.safetyBeaconText}>LIVE SECURITY FEED</Text>
               </View>
-              <Text style={styles.etaText}>Arriving in 3m</Text>
+              <Text style={styles.etaText}>
+                {activeTrip?.status === 'STARTED' ? 'En route to destination' : 'Driver heading to you'}
+              </Text>
             </View>
 
             {/* Driver Profile Card */}
@@ -340,11 +426,14 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               </View>
             </View>
 
-            {/* Simulation trigger to complete ride */}
-            <TouchableOpacity style={styles.simulateCompleteBtn} onPress={handleCompleteRide}>
-              <Ionicons name="checkmark-circle" size={18} color={COLORS.black} style={{ marginRight: 6 }} />
-              <Text style={styles.simulateCompleteText}>SIMULATE ARRIVED SAFE</Text>
-            </TouchableOpacity>
+            <View style={styles.waitingForDriverCard}>
+              <Ionicons name="navigate" size={18} color={COLORS.secondary} />
+              <Text style={styles.waitingForDriverText}>
+                {activeTrip?.status === 'STARTED'
+                  ? 'Your driver is taking you home safely'
+                  : 'Your driver is on the way to your location'}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -364,25 +453,25 @@ export default function PassengerHomeScreen({ openWallet, triggerSOS, activeStat
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Base Safe Dispatched Fee</Text>
                 <Text style={styles.receiptValue}>
-                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.6).toFixed(2) : '0.00'}
+                  {formatRwf(activeTrip?.estimatedFare ? activeTrip.estimatedFare * 0.6 : 0)}
                 </Text>
               </View>
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Distance Charge</Text>
                 <Text style={styles.receiptValue}>
-                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.3).toFixed(2) : '0.00'}
+                  {formatRwf(activeTrip?.estimatedFare ? activeTrip.estimatedFare * 0.3 : 0)}
                 </Text>
               </View>
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Emergency SOS / SafeSec Levy</Text>
                 <Text style={styles.receiptValue}>
-                  ${activeTrip?.estimatedFare ? (activeTrip.estimatedFare * 0.1).toFixed(2) : '0.00'}
+                  {formatRwf(activeTrip?.estimatedFare ? activeTrip.estimatedFare * 0.1 : 0)}
                 </Text>
               </View>
               <View style={[styles.receiptRow, styles.receiptTotalRow]}>
-                <Text style={styles.totalLabel}>Total Charge (Auto-Paid)</Text>
+                <Text style={styles.totalLabel}>Total Charge</Text>
                 <Text style={styles.totalValue}>
-                  ${activeTrip?.estimatedFare ? activeTrip.estimatedFare.toFixed(2) : '0.00'}
+                  {formatRwf(activeTrip?.estimatedFare || 0)}
                 </Text>
               </View>
               <Text style={styles.paymentSourceText}>Charged to {paymentMethod}</Text>
@@ -489,23 +578,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontSize: 8,
     fontWeight: '700',
-  },
-  walletShortcut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    height: 40,
-  },
-  walletShortcutText: {
-    color: COLORS.white,
-    fontWeight: 'bold',
-    fontSize: 12,
-    marginLeft: 6,
   },
   floatingSOS: {
     position: 'absolute',
@@ -708,9 +780,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 4,
   },
-  paymentPicker: {
+  paymentDisplay: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: COLORS.background,
     padding: 14,
@@ -729,11 +800,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: 'bold',
     marginLeft: 10,
-  },
-  changePaymentText: {
-    color: COLORS.primary,
-    fontSize: 12,
-    fontWeight: 'bold',
   },
   confirmRideBtn: {
     backgroundColor: COLORS.primary,
@@ -903,19 +969,22 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 11,
   },
-  simulateCompleteBtn: {
-    backgroundColor: COLORS.secondary,
+  waitingForDriverCard: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 14,
+    backgroundColor: 'rgba(0,210,184,0.08)',
+    borderWidth: 1,
+    borderColor: COLORS.secondary,
     borderRadius: 12,
-    height: 48,
+    padding: 14,
+    gap: 10,
   },
-  simulateCompleteText: {
-    color: COLORS.black,
-    fontWeight: 'bold',
-    fontSize: 13,
+  waitingForDriverText: {
+    flex: 1,
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   successRibbon: {
     alignItems: 'center',

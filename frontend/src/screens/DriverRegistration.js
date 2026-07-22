@@ -3,18 +3,21 @@ import { View, StyleSheet, Text, TouchableOpacity, ScrollView, TextInput, Image 
 import { COLORS } from '../theme/colors';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function DriverRegistration({ onComplete, onCancel }) {
-  const [step, setStep] = useState(1);
+import apiService from '../services/api';
+
+export default function DriverRegistration({ onComplete, onCancel, pendingApproval = false }) {
+  const [step, setStep] = useState(pendingApproval ? 4 : 1);
   const [agreed, setAgreed] = useState(false);
   const [idUploaded, setIdUploaded] = useState(false);
   const [licenseUploaded, setLicenseUploaded] = useState(false);
   const [selfieTaken, setSelfieTaken] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Input fields
   const [licenseNumber, setLicenseNumber] = useState('');
   const [nidNumber, setNidNumber] = useState('');
 
-  const nextStep = () => {
+  const nextStep = async () => {
     if (step === 1 && !agreed) {
       alert('You must consent to the background screening policy.');
       return;
@@ -23,9 +26,23 @@ export default function DriverRegistration({ onComplete, onCancel }) {
       alert('Please fill out document numbers and upload files.');
       return;
     }
-    if (step === 3 && !selfieTaken) {
-      alert('Please perform the biometric selfie check.');
-      return;
+    if (step === 3) {
+      if (!selfieTaken) {
+        alert('Please perform the biometric selfie check.');
+        return;
+      }
+      setIsLoading(true);
+      try {
+        await apiService.createDriverProfile({
+          nationalId: nidNumber,
+          driversLicense: licenseNumber,
+        });
+      } catch (error) {
+        alert(error.message || 'Failed to submit application');
+        setIsLoading(false);
+        return;
+      }
+      setIsLoading(false);
     }
 
     setStep(step + 1);

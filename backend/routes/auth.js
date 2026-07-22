@@ -11,23 +11,35 @@ router.post('/signup', async (req, res) => {
   const { data, error } = await supabaseAuth.auth.signUp({ email, password });
   if (error) return res.status(400).json({ error: error.message });
 
-  await prisma.user.create({
+  const prismaUser = await prisma.user.create({
     data: {
       id: data.user.id,
       email,
       fullName,
       role: role ?? 'PASSENGER',
     },
+    include: { driverProfile: true },
   });
 
-  res.json({ user: data.user, session: data.session });
+  res.json({ user: prismaUser, session: data.session });
 });
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
   if (error) return res.status(401).json({ error: error.message });
-  res.json({ session: data.session, user: data.user });
+  
+  // Fetch user from Prisma to get correct role
+  const prismaUser = await prisma.user.findUnique({
+    where: { id: data.user.id },
+    include: { driverProfile: true },
+  });
+  
+  if (!prismaUser) {
+    return res.status(404).json({ error: 'User not found in database' });
+  }
+  
+  res.json({ session: data.session, user: prismaUser });
 });
 
 router.post('/otp/request', async (req, res) => {

@@ -1,8 +1,8 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = __DEV__ 
-  ? 'http://localhost:5000' 
-  : 'https://your-production-api.com';
+import { SOCKET_URL } from '../constants/config';
+
+const SOCKET_BASE = SOCKET_URL;
 
 class SocketService {
   constructor() {
@@ -15,7 +15,7 @@ class SocketService {
       return this.socket;
     }
 
-    this.socket = io(SOCKET_URL, {
+    this.socket = io(SOCKET_BASE, {
       auth: {
         token: token,
       },
@@ -88,6 +88,20 @@ class SocketService {
 
     this.socket.off('tripRequest');
     this.listeners.delete('tripRequest');
+  }
+
+  onTripUnavailable(callback) {
+    if (!this.socket?.connected) return;
+
+    this.socket.on('tripUnavailable', callback);
+    this.listeners.set('tripUnavailable', callback);
+  }
+
+  offTripUnavailable() {
+    if (!this.socket?.connected) return;
+
+    this.socket.off('tripUnavailable');
+    this.listeners.delete('tripUnavailable');
   }
 
   // Listen for trip status updates

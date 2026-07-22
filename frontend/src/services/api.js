@@ -1,6 +1,6 @@
-const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:5000' 
-  : 'https://your-production-api.com';
+import { API_BASE_URL } from '../constants/config';
+
+const API_BASE = API_BASE_URL;
 
 class ApiService {
   constructor(baseUrl) {
@@ -34,10 +34,22 @@ class ApiService {
         headers,
       });
 
-      const data = await response.json();
+      // Handle empty responses
+      const text = await response.text();
+      let data;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          console.error('JSON Parse Error:', parseError, 'Response text:', text);
+          throw new Error('Invalid JSON response from server');
+        }
+      } else {
+        data = {};
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || 'API request failed');
+        throw new Error(data.error || data.message || 'API request failed');
       }
 
       return data;
@@ -70,103 +82,97 @@ class ApiService {
 
   async logout() {
     this.clearToken();
-    return this.request('/api/auth/logout', {
-      method: 'POST',
-    });
   }
 
   // Driver endpoints
   async createDriverProfile(driverData) {
-    return this.request('/api/drivers/profile', {
+    return this.request('/drivers/apply', {
       method: 'POST',
       body: JSON.stringify(driverData),
     });
   }
 
+  async getDriverProfile() {
+    return this.request('/drivers/me');
+  }
+
+  async getPendingDrivers() {
+    return this.request('/drivers/pending');
+  }
+
+  async approveDriver(driverProfileId) {
+    return this.request(`/drivers/${driverProfileId}/approve`, {
+      method: 'PATCH',
+    });
+  }
+
   async updateDriverStatus(status) {
-    return this.request('/api/drivers/status', {
+    return this.request('/drivers/me/status', {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     });
   }
 
-  async updateDriverLocation(location) {
-    return this.request('/api/drivers/location', {
-      method: 'PATCH',
-      body: JSON.stringify(location),
-    });
-  }
-
   // Trip endpoints
   async createTrip(tripData) {
-    return this.request('/api/trips', {
+    return this.request('/trips', {
       method: 'POST',
       body: JSON.stringify(tripData),
     });
   }
 
+  async getTrip(tripId) {
+    return this.request(`/trips/${tripId}`);
+  }
+
+  async getTripHistory() {
+    return this.request('/trips/history');
+  }
+
+  async getActiveTrip() {
+    const trip = await this.request('/trips/active');
+    return trip || null;
+  }
+
   async acceptTrip(tripId) {
-    return this.request(`/api/trips/${tripId}/accept`, {
-      method: 'POST',
+    return this.request(`/trips/${tripId}/accept`, {
+      method: 'PATCH',
     });
   }
 
   async startTrip(tripId) {
-    return this.request(`/api/trips/${tripId}/start`, {
-      method: 'POST',
+    return this.request(`/trips/${tripId}/start`, {
+      method: 'PATCH',
     });
   }
 
   async completeTrip(tripId) {
-    return this.request(`/api/trips/${tripId}/complete`, {
-      method: 'POST',
+    return this.request(`/trips/${tripId}/complete`, {
+      method: 'PATCH',
     });
   }
 
-  async cancelTrip(tripId, reason) {
-    return this.request(`/api/trips/${tripId}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({ reason }),
+  async cancelTrip(tripId, cancelReason) {
+    return this.request(`/trips/${tripId}/cancel`, {
+      method: 'PATCH',
+      body: JSON.stringify({ cancelReason }),
     });
-  }
-
-  async getActiveTrip() {
-    return this.request('/api/trips/active');
   }
 
   // Payment endpoints
-  async processPayment(paymentData) {
-    return this.request('/api/payments', {
+  async processPayment(tripId, paymentData) {
+    return this.request(`/payments/trip/${tripId}`, {
       method: 'POST',
       body: JSON.stringify(paymentData),
     });
   }
 
-  async getPaymentHistory() {
-    return this.request('/api/payments/history');
-  }
-
-  // Rating endpoints
-  async submitRating(ratingData) {
-    return this.request('/api/ratings', {
-      method: 'POST',
-      body: JSON.stringify(ratingData),
-    });
-  }
-
-  // User endpoints
-  async getProfile() {
-    return this.request('/api/users/profile');
-  }
-
-  async updateProfile(profileData) {
-    return this.request('/api/users/profile', {
-      method: 'PATCH',
-      body: JSON.stringify(profileData),
-    });
+  async getPaymentStatus(paymentId) {
+    return this.request(`/payments/${paymentId}`);
   }
 }
 
-const apiService = new ApiService(API_BASE_URL);
+const apiService = new ApiService(API_BASE);
 
 export default apiService;
+

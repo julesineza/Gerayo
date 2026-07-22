@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ScrollView, Vibration, Alert } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, Vibration, Alert, ActivityIndicator } from 'react-native';
 import { COLORS } from '../theme/colors';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import MapMock from '../components/MapMock';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
+import socketService from '../services/socket';
+import { watchLocation } from '../utils/location';
+import { formatRwf } from '../constants/destinations';
 
-export default function DriverDashboard({ openWallet, triggerSOS, driverState, setDriverState }) {
+export default function DriverDashboard({ triggerSOS, driverState, setDriverState }) {
   const { user } = useAuth();
   const [isOnline, setIsOnline] = useState(false);
   const [countdown, setCountdown] = useState(15);
@@ -16,6 +19,70 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
   const [incomingTrip, setIncomingTrip] = useState(null);
   const [activeTrip, setActiveTrip] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [driverLocation, setDriverLocation] = useState(null);
+
+  useEffect(() => {
+    loadActiveTrip();
+  }, []);
+
+  const loadActiveTrip = async () => {
+    try {
+      const trip = await apiService.getActiveTrip();
+      if (!trip) return;
+
+      setActiveTrip(trip);
+      setIsOnline(true);
+      socketService.joinDriverRoom();
+      socketService.joinTripRoom(trip.id);
+
+      if (trip.status === 'ACCEPTED') {
+        setDriverState('navigating_pickup');
+      } else if (trip.status === 'STARTED') {
+        setDriverState('navigating_destination');
+      }
+    } catch (error) {
+      console.error('Error loading active trip:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOnline) return;
+
+    socketService.joinDriverRoom();
+
+    const handleTripRequest = (trip) => {
+      setIncomingTrip(trip);
+      setDriverState('incoming');
+    };
+
+    const handleTripUnavailable = ({ tripId }) => {
+      setIncomingTrip((current) => (current?.id === tripId ? null : current));
+      setDriverState((current) => (current === 'incoming' ? 'idle' : current));
+    };
+
+    socketService.onTripRequest(handleTripRequest);
+    socketService.onTripUnavailable(handleTripUnavailable);
+
+    return () => {
+      socketService.offTripRequest();
+      socketService.offTripUnavailable();
+      socketService.leaveDriverRoom();
+    };
+  }, [isOnline]);
+
+  useEffect(() => {
+    if (!activeTrip?.id || driverState === 'idle' || driverState === 'incoming') return;
+
+    let subscription = null;
+    watchLocation((loc) => {
+      setDriverLocation(loc);
+      socketService.updateLocation(activeTrip.id, loc);
+    }).then((sub) => {
+      subscription = sub;
+    });
+
+    return () => subscription?.remove?.();
+  }, [activeTrip?.id, driverState]);
 
   // Ticking countdown timer when a request is incoming
   useEffect(() => {
@@ -39,18 +106,33 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
   }, [driverState]);
 
   const toggleOnline = async () => {
-    const newStatus = !isOnline ? 'AVAILABLE' : 'INACTIVE';
-    setIsOnline(!isOnline);
-    
+    const goingOnline = !isOnline;
+    const newStatus = goingOnline ? 'AVAILABLE' : 'INACTIVE';
+
     try {
+      const profile = await apiService.getDriverProfile();
+      if (!profile) {
+        Alert.alert(
+          'Driver Profile Required',
+          'You need to complete driver registration first.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
       await apiService.updateDriverStatus(newStatus);
-      if (!isOnline) {
+      setIsOnline(goingOnline);
+
+      if (goingOnline) {
+        socketService.joinDriverRoom();
         setDriverState('idle');
+      } else {
+        socketService.leaveDriverRoom();
+        setIncomingTrip(null);
       }
     } catch (error) {
       console.error('Error updating driver status:', error);
-      Alert.alert('Error', 'Failed to update online status');
-      setIsOnline(isOnline); // Revert on error
+      Alert.alert('Error', 'Failed to update online status. Please complete driver registration.');
     }
   };
 
@@ -59,13 +141,16 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
 
     try {
       Vibration.vibrate(100);
-      await apiService.acceptTrip(incomingTrip.id);
-      setActiveTrip(incomingTrip);
+      const updatedTrip = await apiService.acceptTrip(incomingTrip.id);
+      setActiveTrip(updatedTrip);
       setIncomingTrip(null);
       setDriverState('navigating_pickup');
+      socketService.joinTripRoom(updatedTrip.id);
     } catch (error) {
       console.error('Error accepting trip:', error);
-      Alert.alert('Error', 'Failed to accept trip');
+      Alert.alert('Error', error.message || 'Failed to accept trip');
+      setIncomingTrip(null);
+      setDriverState('idle');
     }
   };
 
@@ -81,14 +166,16 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
     setIsLoading(true);
     try {
       if (driverState === 'navigating_pickup') {
-        await apiService.startTrip(activeTrip.id);
+        const updated = await apiService.startTrip(activeTrip.id);
+        setActiveTrip(updated);
         setDriverState('navigating_destination');
       } else if (driverState === 'navigating_destination') {
-        await apiService.completeTrip(activeTrip.id);
-        // Update earnings locally (would come from backend)
-        setEarnings((prev) => prev + (activeTrip.estimatedFare || 20));
+        const updated = await apiService.completeTrip(activeTrip.id);
+        setEarnings((prev) => prev + (updated.estimatedFare || 0));
         setTripsCompleted((prev) => prev + 1);
         setActiveTrip(null);
+        setDriverLocation(null);
+        socketService.leaveTripRoom(activeTrip.id);
         setDriverState('idle');
       }
     } catch (error) {
@@ -99,11 +186,40 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
     }
   };
 
+  const getMapPhase = () => {
+    if (driverState === 'incoming') return 'matching';
+    if (driverState === 'navigating_pickup') return 'pickup';
+    if (driverState === 'navigating_destination') return 'enroute';
+    return 'idle';
+  };
+
+  const tripForMap = activeTrip || incomingTrip;
+
   return (
     <View style={styles.container}>
-      {/* Map component representing navigation */}
       <View style={styles.mapContainer}>
-        <MapMock rideState={driverState === 'navigating_destination' ? 'driver_active' : 'idle'} />
+        <MapMock
+          pickup={
+            tripForMap
+              ? {
+                  latitude: tripForMap.pickupLat,
+                  longitude: tripForMap.pickupLng,
+                  name: tripForMap.pickupName,
+                }
+              : null
+          }
+          destination={
+            tripForMap
+              ? {
+                  latitude: tripForMap.destinationLat,
+                  longitude: tripForMap.destinationLng,
+                  name: tripForMap.destinationName,
+                }
+              : null
+          }
+          driverLocation={driverLocation}
+          phase={getMapPhase()}
+        />
       </View>
 
       {/* Floating SOS button for driver security */}
@@ -133,10 +249,6 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
               </View>
             </View>
           </View>
-          <TouchableOpacity style={styles.walletShortcut} onPress={openWallet}>
-            <Ionicons name="wallet" size={18} color={COLORS.secondary} />
-            <Text style={styles.walletShortcutText}>${earnings.toFixed(2)}</Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -167,7 +279,7 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
             <View style={styles.statsContainer}>
               <View style={styles.statBox}>
                 <Text style={styles.statLabel}>EARNED TODAY</Text>
-                <Text style={styles.statValue}>${earnings.toFixed(2)}</Text>
+                <Text style={styles.statValue}>{formatRwf(earnings)}</Text>
               </View>
               <View style={styles.statBox}>
                 <Text style={styles.statLabel}>COMPLETED</Text>
@@ -201,7 +313,7 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
             </View>
 
             <Text style={styles.payoutAmount}>
-              + ${incomingTrip?.estimatedFare ? incomingTrip.estimatedFare.toFixed(2) : '0.00'} Est. Payout
+              + {formatRwf(incomingTrip?.estimatedFare || 0)} Est. Payout
             </Text>
             <Text style={styles.jobDistance}>
               {incomingTrip?.distance ? `${incomingTrip.distance.toFixed(1)} miles` : 'Calculating'} away • Client needs drive home
@@ -281,9 +393,13 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
             </View>
 
             {/* Linear Process Button */}
-            <TouchableOpacity style={styles.workflowBtn} onPress={handleWorkflowNext}>
+            <TouchableOpacity style={styles.workflowBtn} onPress={handleWorkflowNext} disabled={isLoading}>
               <Text style={styles.workflowBtnText}>
-                {driverState === 'navigating_pickup' ? 'ARRIVED AT PICKUP LOCATION' : 'ARRIVED SAFELY (COMPLETE JOB)'}
+                {isLoading
+                  ? 'UPDATING...'
+                  : driverState === 'navigating_pickup'
+                    ? 'ARRIVED AT PICKUP LOCATION'
+                    : 'ARRIVED SAFELY (COMPLETE JOB)'}
               </Text>
               <Ionicons name="arrow-forward-circle" size={22} color={COLORS.black} style={{ marginLeft: 8 }} />
             </TouchableOpacity>
@@ -299,6 +415,8 @@ export default function DriverDashboard({ openWallet, triggerSOS, driverState, s
                   }
                 }
                 setActiveTrip(null);
+                setDriverLocation(null);
+                if (activeTrip?.id) socketService.leaveTripRoom(activeTrip.id);
                 setDriverState('idle');
               }}
             >
@@ -386,23 +504,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     marginLeft: 4,
     fontWeight: '700',
-  },
-  walletShortcut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    height: 40,
-  },
-  walletShortcutText: {
-    color: COLORS.white,
-    fontWeight: 'bold',
-    fontSize: 12,
-    marginLeft: 6,
   },
   bottomSheet: {
     backgroundColor: COLORS.surface,

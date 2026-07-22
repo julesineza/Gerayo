@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerayo Admin Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="loginScreen" class="screen">
+            <div class="login-container">
+                <h1>Gerayo Admin</h1>
+                <p class="subtitle">Driver Management Dashboard</p>
+                <form id="loginForm">
+                    <input type="email" id="email" placeholder="Admin Email" required>
+                    <input type="password" id="password" placeholder="Password" required>
+                    <button type="submit">Login</button>
+                </form>
+                <p id="loginError" class="error"></p>
+            </div>
+        </div>
+
+        <!-- Dashboard Screen -->
+        <div id="dashboardScreen" class="screen hidden">
+            <header>
+                <h1>Gerayo Admin Dashboard</h1>
+                <button id="logoutBtn" class="logout-btn">Logout</button>
+            </header>
+            
+            <main>
+                <div class="stats">
+                    <div class="stat-card">
+                        <h3>Pending Drivers</h3>
+                        <p id="pendingCount">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Approved Drivers</h3>
+                        <p id="approvedCount">0</p>
+                    </div>
+                </div>
+
+                <section class="drivers-section">
+                    <h2>Pending Driver Approvals</h2>
+                    <div id="pendingDrivers" class="drivers-list">
+                        <p class="loading">Loading...</p>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

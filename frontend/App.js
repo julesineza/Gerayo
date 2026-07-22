@@ -4,7 +4,6 @@ import { StatusBar } from 'expo-status-bar';
 import { COLORS } from './src/theme/colors';
 
 // Import Custom Components
-import WalletModal from './src/components/WalletModal';
 import SOSOverlay from './src/components/SOSOverlay';
 
 // Import Screens
@@ -17,30 +16,19 @@ import DriverRegistration from './src/screens/DriverRegistration';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 
 function AppContent() {
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { user, isLoading, isAuthenticated, logout } = useAuth();
   
-  // App Modes: 'passenger' or 'driver' - determined from user role
+  // App Modes: 'passenger' or 'driver'
   const activeRole = user?.role?.toLowerCase() || 'passenger';
 
   // Sub-navigation flow states for the Passenger flow
-  const [passengerState, setPassengerState] = React.useState('home'); // 'home', 'booking', 'matching', 'active', 'receipt'
+  const [passengerState, setPassengerState] = React.useState('home');
 
   // Sub-navigation flow states for the Driver flow
-  const [driverState, setDriverState] = React.useState('idle'); // 'idle', 'incoming', 'navigating_pickup', 'navigating_destination'
+  const [driverState, setDriverState] = React.useState('idle');
 
   // Global Overlay/Modal states
-  const [walletVisible, setWalletVisible] = React.useState(false);
   const [sosVisible, setSosVisible] = React.useState(false);
-
-  // Authentication submission callback
-  const handleAuthComplete = (role, userDetails) => {
-    // Auth is handled by AuthContext, this just ensures proper flow
-  };
-
-  // Skip or back helper to onboarding
-  const handleResetToOnboarding = () => {
-    // This would trigger logout in AuthContext
-  };
 
   if (isLoading) {
     return (
@@ -53,16 +41,17 @@ function AppContent() {
   // Show onboarding if not authenticated
   if (!isAuthenticated) {
     return (
-      <OnboardingScreen onAuthComplete={handleAuthComplete} />
+      <OnboardingScreen onAuthComplete={() => {}} />
     );
   }
 
-  // Show driver registration if driver but not approved
-  if (activeRole === 'driver' && !user.driverProfile?.isApproved) {
+  // Show driver registration if driver has no profile or is awaiting approval
+  if (activeRole === 'driver' && (!user.driverProfile || !user.driverProfile.isApproved)) {
     return (
       <DriverRegistration
-        onComplete={handleResetToOnboarding}
-        onCancel={handleResetToOnboarding}
+        onComplete={logout}
+        onCancel={logout}
+        pendingApproval={Boolean(user.driverProfile && !user.driverProfile.isApproved)}
       />
     );
   }
@@ -75,14 +64,12 @@ function AppContent() {
       <View style={{ flex: 1 }}>
         {activeRole === 'passenger' ? (
           <PassengerHomeScreen
-            openWallet={() => setWalletVisible(true)}
             triggerSOS={() => setSosVisible(true)}
             activeState={passengerState}
             setActiveState={setPassengerState}
           />
         ) : (
           <DriverDashboard
-            openWallet={() => setWalletVisible(true)}
             triggerSOS={() => setSosVisible(true)}
             driverState={driverState}
             setDriverState={setDriverState}
@@ -92,9 +79,6 @@ function AppContent() {
 
       {/* GLOBAL OVERLAYS & CONTROLLERS */}
       
-      {/* Wallet Modal */}
-      <WalletModal visible={walletVisible} onClose={() => setWalletVisible(false)} />
-
       {/* SOS Emergency Overlay */}
       <SOSOverlay visible={sosVisible} onClose={() => setSosVisible(false)} />
     </SafeAreaView>

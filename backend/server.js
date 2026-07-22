@@ -4,41 +4,99 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import 'dotenv/config';
 
-
 import authRoutes from './routes/auth.js';
+import tripRoutes from './routes/trips.js';
+import driverRoutes from './routes/drivers.js';
+import paymentRoutes from './routes/payments.js';
 import { requireAuth } from './middleware/requireAuth.js';
-
+import { supabaseAuth } from './lib/supabase.js';
+import prisma from './lib/prisma.js';
+import { setIO } from './lib/socket.js';
 
 const app = express();
 const server = http.createServer(app);
 
-// Enable Real-Time WebSockets for GPS and Driver-Matching
 const io = new Server(server, {
   cors: {
-    origin: "*", // Adjust for security later in production
-  }
+    origin: '*',
+  },
 });
 
-app.use(cors({
-  origin: '*',
-}));
-app.use(express.json()); // Parses incoming JSON requests
+setIO(io);
 
-app.use('/auth', authRoutes); // Mount auth routes
+app.use(cors({ origin: '*' }));
+app.use(express.json());
 
-// Simple baseline route
-app.get('/', (req, res) => {
+app.use('/auth', authRoutes);
+app.use('/trips', tripRoutes);
+app.use('/drivers', driverRoutes);
+app.use('/payments', paymentRoutes);
+
+app.get('/', requireAuth, (req, res) => {
   res.send('Gerayo Amahoro Backend API is Running..casa.');
 });
 
-// WebSocket connection for real-time tracking
-io.on('connection', (socket) => {
-  console.log('A user/driver connected:', socket.id);
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) {
+    return next(new Error('Authentication required'));
+  }
 
-  // Listen for driver location updates
-  socket.on('updateLocation', (data) => {
-    // Broadcast location to matching passenger
-    io.emit(`locationUpdate-${data.tripId}`, data);
+  try {
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
+    if (error || !user) {
+      return next(new Error('Invalid token'));
+    }
+    socket.userId = user.id;
+    next();
+  } catch {
+    next(new Error('Invalid token'));
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id, socket.userId);
+
+  socket.on('joinDriverRoom', async () => {
+    const profile = await prisma.driverProfile.findUnique({
+      where: { userId: socket.userId },
+    });
+    if (profile?.isApproved) {
+      socket.join('drivers');
+      console.log('Driver joined room:', socket.userId);
+    }
+  });
+
+  socket.on('leaveDriverRoom', () => {
+    socket.leave('drivers');
+  });
+
+  socket.on('joinTrip', ({ tripId }) => {
+    if (tripId) {
+      socket.join(`trip-${tripId}`);
+    }
+  });
+
+  socket.on('leaveTrip', ({ tripId }) => {
+    if (tripId) {
+      socket.leave(`trip-${tripId}`);
+    }
+  });
+
+  socket.on('updateLocation', async (data) => {
+    const { tripId, latitude, longitude } = data;
+    if (!tripId || latitude == null || longitude == null) return;
+
+    await prisma.driverProfile.updateMany({
+      where: { userId: socket.userId },
+      data: { latitude, longitude },
+    });
+
+    io.to(`trip-${tripId}`).emit(`locationUpdate-${tripId}`, {
+      tripId,
+      latitude,
+      longitude,
+    });
   });
 
   socket.on('disconnect', () => {
